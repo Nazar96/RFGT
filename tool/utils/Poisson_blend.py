@@ -17,6 +17,7 @@ def sub2ind(pi, pj, imgH, imgW):
 
 
 def Poisson_blend(imgTrg, imgSrc_gx, imgSrc_gy, holeMask, edge=None):
+    print('start Poisson')
 
     imgH, imgW, nCh = imgTrg.shape
 
@@ -27,14 +28,18 @@ def Poisson_blend(imgTrg, imgSrc_gx, imgSrc_gy, holeMask, edge=None):
     imgRecon = np.zeros((imgH, imgW, nCh), dtype=np.float32)
 
     # prepare discrete Poisson equation
+    print('start solvePoisson')
     A, b = solvePoisson(holeMask, imgSrc_gx, imgSrc_gy, imgTrg, edge)
+    print('finish solvePoisson')
 
     # Independently process each channel
+    print('start channel proc')
     for ch in range(nCh):
 
         # solve Poisson equation
         x = scipy.sparse.linalg.lsqr(A, b[:, ch, None])[0]
         imgRecon[:, :, ch] = x.reshape(imgH, imgW)
+    print('finish channel proc')
 
     # Combined with the known region in the target
     holeMaskC = np.tile(np.expand_dims(holeMask, axis=2), (1, 1, nCh))
@@ -44,6 +49,7 @@ def Poisson_blend(imgTrg, imgSrc_gx, imgSrc_gy, holeMask, edge=None):
     pi = np.expand_dims(np.where((holeMask * edge) == 1)[0], axis=1) # y, i
     pj = np.expand_dims(np.where((holeMask * edge) == 1)[1], axis=1) # x, j
 
+    print('start fill in edge')
     for k in range(len(pi)):
         if pi[k, 0] - 1 >= 0:
             if edge[pi[k, 0] - 1, pj[k, 0]] == 0:
@@ -60,7 +66,9 @@ def Poisson_blend(imgTrg, imgSrc_gx, imgSrc_gy, holeMask, edge=None):
         if pj[k, 0] + 1 <= imgW - 1:
             if edge[pi[k, 0], pj[k, 0] + 1] == 0:
                 imgBlend[pi[k, 0], pj[k, 0], :] = imgBlend[pi[k, 0], pj[k, 0] + 1, :]
+    print('finish fill in edge')
 
+    print('finish Poisson')
     return imgBlend
 
 def solvePoisson(holeMask, imgSrc_gx, imgSrc_gy, imgTrg, edge):
@@ -121,9 +129,9 @@ def solvePoisson(holeMask, imgSrc_gx, imgSrc_gy, imgTrg, edge):
     e_stop  = 0  # equation stop
 
     # 4 neighbors
-    I, J, S, b, e_start, e_stop = constructEquation(0, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
-    I, J, S, b, e_start, e_stop = constructEquation(1, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
-    I, J, S, b, e_start, e_stop = constructEquation(2, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
+#     I, J, S, b, e_start, e_stop = constructEquation(0, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
+#     I, J, S, b, e_start, e_stop = constructEquation(1, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
+#     I, J, S, b, e_start, e_stop = constructEquation(2, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
     I, J, S, b, e_start, e_stop = constructEquation(3, validN, holeMask, edge, imgSrc_gx, imgSrc_gy, imgTrg, pi, pj, pind, qi, qj, qind, I, J, S, b, e_start, e_stop)
 
     nEqn = len(b)

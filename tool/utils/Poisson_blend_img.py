@@ -10,6 +10,13 @@ import copy
 import cv2
 import os
 import argparse
+import torch
+
+from scipy.sparse import find
+
+from cupyx.scipy.sparse.linalg import lsmr
+from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
+import cupy as cp
 
 
 def sub2ind(pi, pj, imgH, imgW):
@@ -34,11 +41,13 @@ def Poisson_blend_img(imgTrg, imgSrc_gx, imgSrc_gy, holeMask, gradientMask=None,
                                                   gradientMask, edge)
 
     # Independently process each channel
+    A = cp_csr_matrix(A)
+    b = cp.array(b)
     for ch in range(nCh):
+              
+        x = lsmr(A, b[:, ch], atol=1e-04, btol=1e-04)[0].get()
 
-        # solve Poisson equation
-        x = scipy.sparse.linalg.lsqr(A, b[:, ch])[0]
-
+#         x = scipy.sparse.linalg.lsqr(A, b[:, ch])[0]
         imgRecon[:, :, ch] = x.reshape(imgH, imgW)
 
     # Combined with the known region in the target

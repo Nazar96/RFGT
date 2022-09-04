@@ -33,12 +33,14 @@ from get_flowNN_gradient import get_flowNN_gradient
 from torchvision.transforms import ToTensor
 import cvbase
 
+from numba import njit
+import  time
+
 
 def to_tensor(img):
     img = Image.fromarray(img)
     img_t = F.to_tensor(img).float()
     return img_t
-
 
 def diffusion(flows, masks):
     flows_filled = []
@@ -174,12 +176,17 @@ def initialize_LAFC(args, device):
     return model, configs
 
 
-def initialize_FGT(args, device):
+def initialize_FGT(args, device, input_resolution=None):
     assert len(os.listdir(args.fgt_ckpts)) == 2
     checkpoint, config_file = glob.glob(os.path.join(args.fgt_ckpts, '*.tar'))[0], \
                               glob.glob(os.path.join(args.fgt_ckpts, '*.yaml'))[0]
     with open(config_file, 'r') as f:
+        print(config_file)
         configs = yaml.full_load(f)
+
+    if input_resolution is not None:
+        configs['input_resolution'] = input_resolution
+
     model = configs['model']
     net = import_module('FGT.models.{}'.format(model))
     model = net.Model(configs).to(device)
@@ -287,6 +294,7 @@ def complete_flow(config, flow_model, flows, flow_masks, mode, device):
 
     num_flows, flow_interval = config['num_flows'], config['flow_interval']
 
+    print('complete flow diffusion')
     diffused_flows = diffusion(flows, flow_masks)
 
     flows = np2tensor(flows)
@@ -300,6 +308,7 @@ def complete_flow(config, flow_model, flows, flow_masks, mode, device):
     t = diffused_flows.shape[2]
     filled_flows = [None] * t
     pivot = num_flows // 2
+    print('complete flow loop')
     for i in range(t):
         indices = indicesGen(i, flow_interval, num_flows, t)
         print('Indices: ', indices, '\r', end='')
@@ -351,7 +360,8 @@ def save_results(outdir, comp_frames):
 
 
 def video_inpainting(args):
-    device = torch.device('cuda:{}'.format(args.gpu))
+#     device = torch.device('cuda:{}'.format(args.gpu))
+    device = 'cuda:0'
     
     if args.opt is not None:
         with open(args.opt, 'r') as f:
@@ -366,7 +376,7 @@ def video_inpainting(args):
     # LAFC (flow completion)
     LAFC_model, LAFC_config = initialize_LAFC(args, device)
     # FGT
-    FGT_model, FGT_config = initialize_FGT(args, device)
+#     FGT_model, FGT_config = initialize_FGT(args, device)
 
     # Loads frames.
     filename_list = glob.glob(os.path.join(args.path, '*.png')) + \
@@ -446,7 +456,9 @@ def video_inpainting(args):
         flow_mask = np.stack(flow_mask, -1).astype(np.bool)
 
     # Completes the flow.
+    print('complete flow forward')
     videoFlowF = complete_flow(LAFC_config, LAFC_model, forward_flows, flow_mask, 'forward', device)
+    print('complete flow backward')
     videoFlowB = complete_flow(LAFC_config, LAFC_model, backward_flows, flow_mask, 'backward', device)
     videoFlowF = tensor2np(videoFlowF)
     videoFlowB = tensor2np(videoFlowB)
@@ -492,24 +504,30 @@ def video_inpainting(args):
                             None)
 
     # if there exist holes in mask, Poisson blending will fail. So I did this trick. I sacrifice some value. Another solution is to modify Poisson blending.
-    for indFrame in range(nFrame):
-        mask_gradient[:, :, indFrame] = scipy.ndimage.binary_fill_holes(mask_gradient[:, :, indFrame]).astype(
-            np.bool)
+#     for indFrame in range(nFrame):
+#         mask_gradient[:, :, indFrame] = scipy.ndimage.binary_fill_holes(mask_gradient[:, :, indFrame]).astype(
+#             np.bool)
 
     # After one gradient propagation iteration
     # gradient --> RGB
     frameBlends = []
+    
     for indFrame in range(nFrame):
         print("Poisson blending frame {0:3d}".format(indFrame))
 
         if mask[:, :, indFrame].sum() > 0:
-            try:
-                frameBlend, UnfilledMask = Poisson_blend_img(video_comp[:, :, :, indFrame],
-                                                             gradient_x_filled[:, 0: imgW - 1, :, indFrame],
-                                                             gradient_y_filled[0: imgH - 1, :, :, indFrame],
-                                                             mask[:, :, indFrame], mask_gradient[:, :, indFrame])
-            except:
-                frameBlend, UnfilledMask = video_comp[:, :, :, indFrame], mask[:, :, indFrame]
+#             try:
+            start = time.time()
+            frameBlend, UnfilledMask = Poisson_blend_img(video_comp[:, :, :, indFrame],
+                                                         gradient_x_filled[:, 0: imgW - 1, :, indFrame],
+                                                         gradient_y_filled[0: imgH - 1, :, :, indFrame],
+                                                         mask[:, :, indFrame], mask_gradient[:, :, indFrame])
+
+            print('poisson blend', time.time() - start)
+            print(frameBlend.shape, UnfilledMask.shape)
+#             except:
+#                 frameBlend, UnfilledMask = video_comp[:, :, :, indFrame], mask[:, :, indFrame]
+#             print(frameBlend.shape, UnfilledMask.shape)
 
             frameBlend = np.clip(frameBlend, 0, 1.0)
             tmp = cv2.inpaint((frameBlend * 255).astype(np.uint8), UnfilledMask.astype(np.uint8), 3,
@@ -525,6 +543,9 @@ def video_inpainting(args):
         else:
             frameBlend_ = video_comp[:, :, :, indFrame]
         frameBlends.append(frameBlend_)
+        
+    del RAFT_model, LAFC_model, videoFlowB
+    torch.cuda.empty_cache()
 
     if args.vis_prop:
         save_fgcp(args.outroot, frameBlends, mask)
@@ -534,10 +555,10 @@ def video_inpainting(args):
     for i in range(len(frameBlends)):
         frameBlends[i] = frameBlends[i][:, :, ::-1]
 
-    frames_first = np2tensor(frameBlends, near='t').to(device)
+    frames_first = np2tensor(frameBlends, near='t').half()
     mask = np.moveaxis(mask, -1, 0)
     mask = mask[:, :, :, np.newaxis]
-    masks = np2tensor(mask, near='t').to(device)
+    masks = np2tensor(mask, near='t').half()
     normed_frames = frames_first * 2 - 1
     comp_frames = [None] * video_length
 
@@ -550,8 +571,10 @@ def video_inpainting(args):
     videoFlowF = np.concatenate([videoFlowF, videoFlowF[-1:, ...]], axis=0)
 
     flows = np2tensor(videoFlowF, near='t')
-    flows = norm_flows(flows).to(device)
-
+    flows = norm_flows(flows).half()
+    
+    FGT_model, FGT_config = initialize_FGT(args, device)
+    FGT_model = FGT_model.half()
     for f in range(0, video_length, neighbor_stride):
         neighbor_ids = [i for i in range(max(0, f - neighbor_stride), min(video_length, f + neighbor_stride + 1))]
         ref_ids = get_ref_index(f, neighbor_ids, video_length, ref_length, num_ref)
@@ -560,10 +583,26 @@ def video_inpainting(args):
         selected_masks = masks[:, neighbor_ids + ref_ids]
         masked_frames = selected_frames * (1 - selected_masks)
         selected_flows = flows[:, neighbor_ids + ref_ids]
-        with torch.no_grad():
-            filled_frames = FGT_model(masked_frames, selected_flows, selected_masks)
+#         with torch.no_grad():
+
+        filled_frames = hallucintaion(
+            masked_frames.half().to(device), 
+            selected_flows.half().to(device), 
+            selected_masks.half().to(device),
+            FGT_model.half(),
+        ).cpu()
+            
+#             filled_frames = FGT_model(
+#                 masked_frames.half().to(device), 
+#                 selected_flows.half().to(device), 
+#                 selected_masks.half().to(device),
+#             ).cpu()
+           
+        del masked_frames, selected_flows, selected_masks
+        torch.cuda.empty_cache()
+        
         filled_frames = (filled_frames + 1) / 2
-        filled_frames = filled_frames.cpu().permute(0, 2, 3, 1).numpy() * 255
+        filled_frames = filled_frames.permute(0, 2, 3, 1).numpy() * 255
         for i in range(len(neighbor_ids)):
             idx = neighbor_ids[i]
             valid_frame = frames_first[0, idx].cpu().permute(1, 2, 0).numpy() * 255.
@@ -579,8 +618,85 @@ def video_inpainting(args):
     create_dir(args.outroot)
     for i in range(len(comp_frames)):
         comp_frames[i] = comp_frames[i].astype(np.uint8)
-    imageio.mimwrite(os.path.join(args.outroot, 'result.mp4'), comp_frames, fps=30, quality=8)
+    imageio.mimwrite(os.path.join(args.outroot, 'result_lama_refine.mp4'), comp_frames, fps=30, quality=8)
     print(f'Done, please check your result in {args.outroot} ')
+
+    
+def downsample(frame, flow, mask, downscale_factor=0.5):
+    shape = frame.shape
+    h, w = shape[-2:]
+    h, w = int(h * downscale_factor), int(w * downscale_factor)
+    
+    frame = F2.interpolate(frame, size=[frame.shape[-3], h, w])
+    flow = F2.interpolate(flow, size=[flow.shape[-3], h, w])
+    mask = F2.interpolate(mask, size=[mask.shape[-3], h, w])
+    print('flow shape', flow.shape)
+    return frame, flow, mask
+
+
+def l1_masked(gt, pred, mask):
+    mask = mask == 1
+    mask = mask[0]
+    
+    gt_masked = torch.masked_select(gt, mask)
+    pred_masked = torch.masked_select(pred, mask)
+    loss = F2.l1_loss(gt_masked, pred_masked)
+    return loss
+    
+
+def refine(target, z, mask, model, n_iter=15, lr=1e-3):
+ 
+    z = z.detach().cuda()
+    z.requires_grad = True
+    optimizer = torch.optim.Adam([z], lr=lr)
+    for _ in range(n_iter):
+        optimizer.zero_grad()
+        pred = model.decode(z)
+        
+        pred = F2.interpolate(pred, size=list(target.shape[-2:]), mode='bilinear', align_corners=False)
+        loss = l1_masked(target, pred, mask)
+        print(loss.item())
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        result = model.decode(z)
+    return result, z.detach()
+
+def hallucintaion(frame, flow, mask, model, n_iter=3):
+
+    print('Hallucintaion stage')
+    
+    z_list, mask_list = [], []
+    for i in range(n_iter):
+        with torch.no_grad():
+            z = model.cuda().half().encode(
+                frame.cuda().half(),
+                flow.cuda().half(),
+                mask.cuda().half(),
+                ).cpu()
+
+            z_list.append(z)
+            mask_list.append(mask)
+
+            frame, flow, mask = downsample(frame, flow, mask, 0.5)
+
+    z_list = z_list[::-1]
+    mask_list = mask_list[::-1]
+
+    with torch.no_grad():
+        target = model.decode(z_list[0].half().cuda())
+        
+    for i in range(1, len(z_list)):
+        print('level', i, tuple(mask_list[i-1].shape[-2:]))
+        z = z_list[i]
+        mask = mask_list[i-1]
+        target, z = refine(target.cuda(), z, mask.cuda(), model)
+        z_list[i] = z.cpu()
+        
+    with torch.no_grad():
+        result = model.cuda().half().decode(z_list[-1].half().cuda())
+    return result
 
 
 def main(args):

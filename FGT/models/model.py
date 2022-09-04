@@ -23,6 +23,13 @@ class Model(nn.Module):
     def forward(self, frames, flows, masks):
         ret = self.net(frames, flows, masks)
         return ret
+    
+    def encode(self, frames, flows, masks):
+        return self.net.encode(frames, flows, masks)
+
+    def decode(self, enc_feats):
+        output = self.net.decode(enc_feats)
+        return output
 
 
 class Encoder(nn.Module):
@@ -281,4 +288,44 @@ class FGT(BaseNetwork):
         output = self.decoder(enc_feats)
         output = torch.tanh(output)
         return output
-
+    
+    def encode(self, masked_frames, flows, masks):
+        b, t, c, h, w = masked_frames.shape
+        cf = flows.shape[2]
+        output_shape = (h // 4, w // 4)
+        if self.passmask:
+            inputs = torch.cat((masked_frames, masks), dim=2)
+        else:
+            inputs = masked_frames
+        
+        inputs = inputs.view(b * t, self.in_channels, h, w)
+        flows = flows.view(b * t, cf, h, w)
+               
+        
+        enc_feats = self.frame_endoder(inputs)
+        flow_feats = self.flow_encoder(flows)
+        trans_feat = self.patch2vec(enc_feats)
+        flow_patches = self.f_patch2vec(flow_feats)
+        _, c, h, w = trans_feat.shape
+        cf = flow_patches.shape[1]
+        if h != self.token_size[0] or w != self.token_size[1]:
+            new_h, new_w = h, w
+        else:
+            new_h, new_w = 0, 0
+            output_shape = (0, 0)
+        trans_feat = trans_feat.view(b * t, c, -1).permute(0, 2, 1)
+        flow_patches = flow_patches.view(b * t, cf, -1).permute(0, 2, 1)
+        trans_feat = self.first_t_transformer(trans_feat, t, new_h, new_w, output_shape)
+        trans_feat = self.add_pos_emb(trans_feat, new_h, new_w)
+        trans_feat = self.first_s_transformer(trans_feat, flow_patches, t, new_h, new_w, output_shape)
+        inputs_trans_feat = {'x': trans_feat, 'f': flow_patches, 't': t, 'h': new_h, 'w': new_w,
+                             'output_size': output_shape}
+        trans_feat = self.transformer(inputs_trans_feat)['x']
+        trans_feat = self.vec2patch(trans_feat, output_shape[0], output_shape[1])
+        enc_feats = enc_feats + trans_feat
+        return enc_feats
+    
+    def decode(self, enc_feats):
+        output = self.decoder(enc_feats)
+        output = torch.tanh(output)
+        return output
