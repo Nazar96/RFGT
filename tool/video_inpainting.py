@@ -574,6 +574,9 @@ def video_inpainting(args):
     flows = norm_flows(flows).half()
     
     FGT_model, FGT_config = initialize_FGT(args, device)
+    for p in FGT_model.parameters(): 
+        p.requires_grad = False
+    
     FGT_model = FGT_model.half()
     for f in range(0, video_length, neighbor_stride):
         neighbor_ids = [i for i in range(max(0, f - neighbor_stride), min(video_length, f + neighbor_stride + 1))]
@@ -630,22 +633,21 @@ def downsample(frame, flow, mask, downscale_factor=0.5):
     frame = F2.interpolate(frame, size=[frame.shape[-3], h, w])
     flow = F2.interpolate(flow, size=[flow.shape[-3], h, w])
     mask = F2.interpolate(mask, size=[mask.shape[-3], h, w])
-    print('flow shape', flow.shape)
+    flow[:,:,0] /= 2
+    flow[:,:,1] /= 2
     return frame, flow, mask
 
 
 def l1_masked(gt, pred, mask):
-    mask = mask == 1
-    mask = mask[0]
-    
+    print('mask', mask.shape, mask.sum())
     gt_masked = torch.masked_select(gt, mask)
     pred_masked = torch.masked_select(pred, mask)
     loss = F2.l1_loss(gt_masked, pred_masked)
     return loss
     
 
-def refine(target, z, mask, model, n_iter=15, lr=1e-3):
- 
+def refine(target, z, mask, model, n_iter=2, lr=1e-2):
+    
     z = z.detach().cuda()
     z.requires_grad = True
     optimizer = torch.optim.Adam([z], lr=lr)
@@ -653,17 +655,23 @@ def refine(target, z, mask, model, n_iter=15, lr=1e-3):
         optimizer.zero_grad()
         pred = model.decode(z)
         
-        pred = F2.interpolate(pred, size=list(target.shape[-2:]), mode='bilinear', align_corners=False)
+        pred = F2.interpolate(pred, size=list(target.shape[-2:]))
         loss = l1_masked(target, pred, mask)
         print(loss.item())
+        
+        if loss.item() == 0:
+            break
+        
         loss.backward()
         optimizer.step()
+        
+        torch.cuda.empty_cache()
 
     with torch.no_grad():
-        result = model.decode(z)
+        result = model.decode(z).detach()
     return result, z.detach()
 
-def hallucintaion(frame, flow, mask, model, n_iter=3):
+def hallucintaion(frame, flow, mask, model, n_iter=4):
 
     print('Hallucintaion stage')
     
@@ -680,17 +688,19 @@ def hallucintaion(frame, flow, mask, model, n_iter=3):
             mask_list.append(mask)
 
             frame, flow, mask = downsample(frame, flow, mask, 0.5)
-
+            
     z_list = z_list[::-1]
     mask_list = mask_list[::-1]
 
+    model = model.double()
+    
     with torch.no_grad():
-        target = model.decode(z_list[0].half().cuda())
+        target = model.decode(z_list[0].double().cuda()).detach()
         
     for i in range(1, len(z_list)):
         print('level', i, tuple(mask_list[i-1].shape[-2:]))
-        z = z_list[i]
-        mask = mask_list[i-1]
+        z = z_list[i].double()
+        mask = mask_list[i-1] >= 1
         target, z = refine(target.cuda(), z, mask.cuda(), model)
         z_list[i] = z.cpu()
         
