@@ -50,9 +50,7 @@ pip install imageio-ffmpeg
 4. Run the object removal demo
 ```bash
 cd tool
-python video_inpainting.py --path ../data/frames/schoolgirls \
---path_mask ../data/masks/schoolgirls \
---outroot ../data/results/schoolgirls
+python video_inpainting.py --path ../horses/crop/frame0/ --path_mask ../horses/crop/mask0/ --outroot ../horses/result/ --imgW 1024 --imgH 512
 ```
 If everythings works, you will find a `result.mp4` file in `data/results/schoolgirls`. And the video should be like:
 
