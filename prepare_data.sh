@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+apt-get install libgl1 -y
 apt install unzip -y
 pip install cupy-cuda11x -f https://pip.cupy.dev/aarch64
 
