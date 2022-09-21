@@ -23,7 +23,6 @@ import torchvision.transforms.functional as F
 import torch.nn.functional as F2
 from RAFT import utils
 from RAFT import RAFT
-import imageio
 import yaml
 from importlib import import_module
 
@@ -558,9 +557,9 @@ def video_inpainting(args):
     
     del videoFlowB
     
-    torch.save(frameBlends, 'frameBlends.pt')
-    torch.save(flows, 'flows.pt')
-    torch.save(mask, 'mask.pt')
+    torch.save(frameBlends, 'frameBlends_l.pt')
+    torch.save(flows, 'flows_l.pt')
+    torch.save(mask, 'mask_l.pt')
     torch.save(mask_full, 'mask_full.pt')
 
     
@@ -635,14 +634,14 @@ def video_inpainting(args):
         selected_flows_l = flows_l[:, neighbor_ids + ref_ids]
         # with torch.no_grad():
         
-        filled_frames = hallucintaion(
+        filled_frames = hallucintaion1(
             masked_frames.float().to(device),
             masked_frames_l.float().to(device),
             selected_flows.float().to(device),
             selected_flows_l.float().to(device), 
             selected_masks.float().to(device),
             selected_masks_l.float().to(device),
-            FGT_model.half(),
+            FGT_model.float(),
         ).cpu()
             
            
@@ -655,7 +654,7 @@ def video_inpainting(args):
             idx = neighbor_ids[i]
             valid_frame = frames_first[0, idx].cpu().permute(1, 2, 0).numpy() * 255.
             # valid_mask = masks[0, idx].cpu().permute(1, 2, 0).numpy()
-
+            
             valid_mask = masks_full[0, idx].cpu().permute(1, 2, 0).numpy()
             comp = np.array(filled_frames[i]).astype(np.uint8) * valid_mask + \
                    np.array(valid_frame).astype(np.uint8) * (1 - valid_mask)
@@ -690,6 +689,15 @@ def downsample(frame, flow, mask, downscale_factor=0.5):
     return frame, flow, mask
 
 
+def downsample1(tensor, downscale_factor=0.5):
+    shape = tensor.shape
+    h, w = shape[-2:]
+    h, w = int(h * downscale_factor), int(w * downscale_factor)
+    
+    tensor = F2.interpolate(tensor, size=[tensor.shape[-3], h, w])
+    return tensor
+
+
 def l1_masked(gt, pred, mask):
 #     batch_size = gt.shape[0]
     
@@ -714,8 +722,8 @@ def refine(target, z, mask, model, n_iter=35, lr=1e-1):
     z.requires_grad = True
     optimizer = torch.optim.Adam([z], lr=lr)
 
-
-    mask = F2.interpolate(mask, size=list(target.shape[-2:]))
+    print(target.shape, mask.shape)
+    mask = downsample1(mask)
     mask = mask >= 1
     for _ in range(n_iter):
         optimizer.zero_grad()
@@ -743,7 +751,7 @@ def refine(target, z, mask, model, n_iter=35, lr=1e-1):
 
     with torch.no_grad():
         result = model.decode(z).detach()
-    return result, z.detach()
+    return result
 
 
 def hallucintaion(frame, flow, mask, model, n_iter=2):
@@ -780,8 +788,8 @@ def hallucintaion(frame, flow, mask, model, n_iter=2):
         print('level', i, tuple(mask_list[i-1].shape[-2:]), 'lr', lrs[i])
         z = z_list[i].double()
         mask = mask_list[i-1] >= 1
-        target, _ = refine(target.cuda(), z, mask.cuda(), model, lr=lrs[i])
-    
+        target = refine(target.cuda(), z, mask.cuda(), model, lr=lrs[i])
+    print(type(target))
     return target
 
 
