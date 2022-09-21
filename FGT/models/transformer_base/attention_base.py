@@ -14,12 +14,16 @@ class Attention(nn.Module):
         self.dropout = nn.Dropout(p=p)
 
     def forward(self, query, key, value):
-        scores = torch.matmul(query, key.transpose(-2, -1)
+        scores = torch.matmul(query/2, key.transpose(-2, -1)/2
                               ) / math.sqrt(query.size(-1))
-        p_attn = F.softmax(scores, dim=-1)
+        p_attn = F.softmax(scores*4, dim=-1)
+
+        del scores
+        torch.cuda.empty_cache()
+
         p_attn = self.dropout(p_attn)
         p_val = torch.matmul(p_attn, value)
-        return p_val, p_attn
+        return p_val.float(), p_attn
 
 
 class TMHSA(nn.Module):
@@ -64,6 +68,8 @@ class TMHSA(nn.Module):
         key = key.permute(0, 2, 4, 6, 1, 3, 5, 7).reshape(b, self.group_size * self.group_size, self.head, -1, c_h)
         value = value.view(b, t, self.group_size, window_h, self.group_size, window_w, self.head, c_h)
         value = value.permute(0, 2, 4, 6, 1, 3, 5, 7).reshape(b, self.group_size * self.group_size, self.head, -1, c_h)
+
+        query, key, value = query.half(), key.half(), value.half()
         att, _ = self.attention(query, key, value)
         att = att.view(b, self.group_size, self.group_size, self.head, t, window_h, window_w, c_h)
         att = att.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous().view(bt, new_h, new_w, c)

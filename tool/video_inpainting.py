@@ -454,6 +454,8 @@ def video_inpainting(args):
 
         # mask indicating the missing region in the video.
         mask = np.stack(mask, -1).astype(np.bool)  # [H, W, C, N]
+        mask_full = mask.copy()
+
         mask_dilated = np.stack(mask_dilated, -1).astype(np.bool)
         flow_mask = np.stack(flow_mask, -1).astype(np.bool)
 
@@ -558,9 +560,18 @@ def video_inpainting(args):
     
     torch.save(frameBlends, 'frameBlends.pt')
     torch.save(flows, 'flows.pt')
+    torch.save(mask, 'mask.pt')
+    torch.save(mask_full, 'mask_full.pt')
+
     
     frameBlends = torch.load('frameBlends.pt')
     flows = torch.load('flows.pt')
+    mask = torch.load('mask.pt')
+    mask_full = torch.load('mask_full.pt')
+
+    frameBlends_l = torch.load('frameBlends_l.pt')
+    flows_l = torch.load('flows_l.pt')
+    mask_l = torch.load('mask_l.pt')
 
     del RAFT_model, LAFC_model
     torch.cuda.empty_cache()
@@ -570,11 +581,27 @@ def video_inpainting(args):
     for i in range(len(frameBlends)):
         frameBlends[i] = frameBlends[i][:, :, ::-1]
 
+    for i in range(len(frameBlends)):
+        frameBlends_l[i] = frameBlends_l[i][:, :, ::-1]
+
     frames_first = np2tensor(frameBlends, near='t').half()
+    frames_first_l = np2tensor(frameBlends_l, near='t').half()
+
     mask = np.moveaxis(mask, -1, 0)
+    mask_l = np.moveaxis(mask_l, -1, 0)
+    mask_full = np.moveaxis(mask_full, -1, 0)
+
     mask = mask[:, :, :, np.newaxis]
+    mask_l = mask_l[:, :, :, np.newaxis]
+    mask_full = mask_full[:, :, :, np.newaxis]
+
     masks = np2tensor(mask, near='t').half()
+    masks_l = np2tensor(mask_l, near='t').half()
+    masks_full = np2tensor(mask_full, near='t').half()
+
     normed_frames = frames_first * 2 - 1
+    normed_frames_l = frames_first_l * 2 - 1
+
     comp_frames = [None] * video_length
 
     ref_length = args.step
@@ -592,29 +619,32 @@ def video_inpainting(args):
         
         neighbor_ids = [i for i in range(max(0, f - neighbor_stride), min(video_length, f + neighbor_stride + 1))]
         ref_ids = get_ref_index(f, neighbor_ids, video_length, ref_length, num_ref)
-        print(f, len(neighbor_ids), len(ref_ids))
-        selected_frames = normed_frames[:, neighbor_ids + ref_ids]
-        selected_masks = masks[:, neighbor_ids + ref_ids]
-        masked_frames = selected_frames * (1 - selected_masks)
-        selected_flows = flows[:, neighbor_ids + ref_ids]
-#         with torch.no_grad():
-        print('frame nans', torch.isnan(masked_frames).sum())
-        print('mask nans', torch.isnan(selected_masks).sum())
-        print('flow nans', torch.isnan(selected_flows).sum())
         
+        selected_frames = normed_frames[:, neighbor_ids + ref_ids]
+        selected_frames_l = normed_frames_l[:, neighbor_ids + ref_ids]
 
+        selected_masks = masks[:, neighbor_ids + ref_ids]
+        selected_masks_l = masks_l[:, neighbor_ids + ref_ids]
+        selected_masks_full = masks_full[:, neighbor_ids + ref_ids]
+
+        masked_frames = selected_frames * (1 - selected_masks)
+        masked_frames_l = selected_frames_l * (1 - selected_masks_l)
+        masked_frames_full = selected_frames * (1 - selected_masks_full)
+
+        selected_flows = flows[:, neighbor_ids + ref_ids]
+        selected_flows_l = flows_l[:, neighbor_ids + ref_ids]
+        # with torch.no_grad():
+        
         filled_frames = hallucintaion(
-            masked_frames.half().to(device), 
-            selected_flows.half().to(device), 
-            selected_masks.half().to(device),
+            masked_frames.float().to(device),
+            masked_frames_l.float().to(device),
+            selected_flows.float().to(device),
+            selected_flows_l.float().to(device), 
+            selected_masks.float().to(device),
+            selected_masks_l.float().to(device),
             FGT_model.half(),
         ).cpu()
             
-#             filled_frames = FGT_model(
-#                 masked_frames.half().to(device), 
-#                 selected_flows.half().to(device), 
-#                 selected_masks.half().to(device),
-#             ).cpu()
            
         del masked_frames, selected_flows, selected_masks
         torch.cuda.empty_cache()
@@ -624,7 +654,9 @@ def video_inpainting(args):
         for i in range(len(neighbor_ids)):
             idx = neighbor_ids[i]
             valid_frame = frames_first[0, idx].cpu().permute(1, 2, 0).numpy() * 255.
-            valid_mask = masks[0, idx].cpu().permute(1, 2, 0).numpy()
+            # valid_mask = masks[0, idx].cpu().permute(1, 2, 0).numpy()
+
+            valid_mask = masks_full[0, idx].cpu().permute(1, 2, 0).numpy()
             comp = np.array(filled_frames[i]).astype(np.uint8) * valid_mask + \
                    np.array(valid_frame).astype(np.uint8) * (1 - valid_mask)
             if comp_frames[idx] is None:
@@ -681,6 +713,10 @@ def refine(target, z, mask, model, n_iter=35, lr=1e-1):
 
     z.requires_grad = True
     optimizer = torch.optim.Adam([z], lr=lr)
+
+
+    mask = F2.interpolate(mask, size=list(target.shape[-2:]))
+    mask = mask >= 1
     for _ in range(n_iter):
         optimizer.zero_grad()
 
@@ -745,13 +781,26 @@ def hallucintaion(frame, flow, mask, model, n_iter=2):
         z = z_list[i].double()
         mask = mask_list[i-1] >= 1
         target, _ = refine(target.cuda(), z, mask.cuda(), model, lr=lrs[i])
-        
-        # z_list[i] = z.cpu()
-        
-    # with torch.no_grad():
-    #     result = model.double().cuda().decode(z.double().cuda())
-    # return result
+    
+    return target
 
+
+def hallucintaion1(frame, frame_l, flow, flow_l, mask, mask_l, model):
+
+    print('Hallucintaion stage')
+    
+    with torch.no_grad():
+        z = model.cuda().encode(
+            frame.cuda(),
+            flow.cuda(),
+            mask.cuda(),
+            ).cpu()
+    
+    with torch.no_grad():
+        pred  = model(frame_l, flow_l, mask_l)
+        target = pred * mask_l + frame_l * (1 - mask_l)
+                                                               
+    target = refine(target, z, mask, model)
     
     return target
 
