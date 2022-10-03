@@ -1,36 +1,42 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
-import os
-import cv2
+
 import copy
 import numpy as np
-import scipy.io as sio
-from utils.common_utils import interp, BFconsistCheck, \
+from tool.utils.common_utils import interp, BFconsistCheck, \
     FBconsistCheck, consistCheck, get_KeySourceFrame_flowNN_gradient
 
 
-def get_flowNN_gradient(args,
+def get_flowNN_gradient(
                         gradient_x,
                         gradient_y,
-                        mask_RGB,
                         mask,
                         videoFlowF,
                         videoFlowB,
-                        videoNonLocalFlowF,
-                        videoNonLocalFlowB):
+                        videoNonLocalFlowF=None,
+                        videoNonLocalFlowB=None):
 
     # gradient_x:         imgH x (imgW - 1 + 1) x 3 x nFrame
     # gradient_y:         (imgH - 1 + 1) x imgW x 3 x nFrame
-    # mask_RGB:           imgH x imgW x nFrame
     # mask:               imgH x imgW x nFrame
     # videoFlowF:         imgH x imgW x 2 x (nFrame - 1) | [u, v]
     # videoFlowB:         imgH x imgW x 2 x (nFrame - 1) | [u, v]
     # videoNonLocalFlowF: imgH x imgW x 2 x 3 x nFrame
     # videoNonLocalFlowB: imgH x imgW x 2 x 3 x nFrame
 
-    if args.Nonlocal:
-        num_candidate = 5
-    else:
-        num_candidate = 2
+    # if args.Nonlocal:
+    #     num_candidate = 5
+    # else:
+    #     num_candidate = 2
+
+    mask = np.moveaxis(mask, 0, -1)
+
+    
+    num_candidate = 2
+    Nonlocal = False
+    consistencyThres = 5
+    alpha = 0.1
+
+
     imgH, imgW, nFrame = mask.shape
     numPix = np.sum(mask)
 
@@ -85,6 +91,7 @@ def get_flowNN_gradient(args,
         flowB_neighbor = copy.deepcopy(holepixPos)
         flowB_neighbor = flowB_neighbor.astype(np.float32)
 
+        print('videoFlowB', videoFlowB.shape, indFrame)
         flowB_vertical = videoFlowB[:, :, 1, indFrame - 1]  # t --> t-1
         flowB_horizont = videoFlowB[:, :, 0, indFrame - 1]
         flowF_vertical = videoFlowF[:, :, 1, indFrame - 1]  # t-1 --> t
@@ -103,9 +110,7 @@ def get_flowNN_gradient(args,
                                       flowF_vertical,
                                       flowF_horizont,
                                       holepixPos,
-                                      args.consistencyThres)
-
-        trueConsist = IsConsist[IsConsist == True]
+                                      consistencyThres)
 
         BFdiff, BF_uv = consistCheck(videoFlowF[:, :, :, indFrame - 1],
                                      videoFlowB[:, :, :, indFrame - 1])
@@ -267,7 +272,7 @@ def get_flowNN_gradient(args,
                                       flowB_vertical,
                                       flowB_horizont,
                                       holepixPos,
-                                      args.consistencyThres)
+                                      consistencyThres)
 
         FBdiff, FB_uv = consistCheck(videoFlowB[:, :, :, indFrame],
                                      videoFlowF[:, :, :, indFrame])
@@ -438,7 +443,7 @@ def get_flowNN_gradient(args,
     mask_tofill = np.zeros((imgH, imgW, nFrame)).astype(np.bool)
 
     for indFrame in range(nFrame):
-        if args.Nonlocal:
+        if Nonlocal:
             consistencyMap[:, :, 2, indFrame], _ = consistCheck(
                 videoNonLocalFlowB[:, :, :, 0, indFrame],
                 videoNonLocalFlowF[:, :, :, 0, indFrame])
@@ -451,7 +456,7 @@ def get_flowNN_gradient(args,
 
         HaveNN = np.zeros((imgH, imgW, num_candidate))
 
-        if args.Nonlocal:
+        if Nonlocal:
             HaveKeySourceFrameFlowNN, gradient_x_KeySourceFrameFlowNN, gradient_y_KeySourceFrameFlowNN = \
                 get_KeySourceFrame_flowNN_gradient(sub,
                                                   indFrame,
@@ -460,7 +465,7 @@ def get_flowNN_gradient(args,
                                                   videoNonLocalFlowF,
                                                   gradient_x,
                                                   gradient_y,
-                                                  args.consistencyThres)
+                                                  consistencyThres)
 
             HaveNN[:, :, 2] = HaveKeySourceFrameFlowNN[:, :, 0] == 1
             HaveNN[:, :, 3] = HaveKeySourceFrameFlowNN[:, :, 1] == 1
@@ -472,7 +477,7 @@ def get_flowNN_gradient(args,
         NotHaveNN = np.logical_and(np.invert(HaveNN.astype(np.bool)),
                 np.repeat(np.expand_dims((mask[:, :, indFrame]), 2), num_candidate, axis=2))
 
-        if args.Nonlocal:
+        if Nonlocal:
             HaveNN_sum = np.logical_or.reduce((HaveNN[:, :, 0],
                                                HaveNN[:, :, 1],
                                                HaveNN[:, :, 2],
@@ -490,7 +495,7 @@ def get_flowNN_gradient(args,
         gradient_x_Candidate[:, :, :, 1] = gradient_x_FN[:, :, :, indFrame]
         gradient_y_Candidate[:, :, :, 1] = gradient_y_FN[:, :, :, indFrame]
 
-        if args.Nonlocal:
+        if Nonlocal:
             gradient_x_Candidate[:, :, :, 2] = gradient_x_KeySourceFrameFlowNN[:, :, :, 0]
             gradient_y_Candidate[:, :, :, 2] = gradient_y_KeySourceFrameFlowNN[:, :, :, 0]
             gradient_x_Candidate[:, :, :, 3] = gradient_x_KeySourceFrameFlowNN[:, :, :, 1]
@@ -498,12 +503,12 @@ def get_flowNN_gradient(args,
             gradient_x_Candidate[:, :, :, 4] = gradient_x_KeySourceFrameFlowNN[:, :, :, 2]
             gradient_y_Candidate[:, :, :, 4] = gradient_y_KeySourceFrameFlowNN[:, :, :, 2]
 
-        consistencyMap[:, :, :, indFrame] = np.exp( - consistencyMap[:, :, :, indFrame] / args.alpha)
+        consistencyMap[:, :, :, indFrame] = np.exp( - consistencyMap[:, :, :, indFrame] / alpha)
 
         consistencyMap[NotHaveNN[:, :, 0], 0, indFrame] = 0
         consistencyMap[NotHaveNN[:, :, 1], 1, indFrame] = 0
 
-        if args.Nonlocal:
+        if Nonlocal:
             consistencyMap[NotHaveNN[:, :, 2], 2, indFrame] = 0
             consistencyMap[NotHaveNN[:, :, 3], 3, indFrame] = 0
             consistencyMap[NotHaveNN[:, :, 4], 4, indFrame] = 0

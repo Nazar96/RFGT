@@ -1,20 +1,12 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import scipy.ndimage
-from scipy.sparse.linalg import spsolve
 from scipy import sparse
 import scipy.io as sio
 import numpy as np
-from PIL import Image
 import copy
-import cv2
-import os
-import argparse
-import torch
-
-from scipy.sparse import find
 
 from cupyx.scipy.sparse.linalg import lsmr
+# from cupyx.scipy.sparse.linalg import lobpcg as lsmr
 from cupyx.scipy.sparse import csr_matrix as cp_csr_matrix
 import cupy as cp
 

@@ -360,6 +360,16 @@ def save_results(outdir, comp_frames):
             cv2.imwrite(out_path, comp_frames[i][:, :, ::-1].astype(np.uint8))
 
 
+def flow_guided_inpainting():
+    """_summary_
+
+    Args:
+        args (_type_): _description_
+    """
+    return frames, masks
+
+
+
 def video_inpainting(args):
 #     device = torch.device('cuda:{}'.format(args.gpu))
     device = 'cuda:0'
@@ -480,8 +490,7 @@ def video_inpainting(args):
         img = cv2.inpaint((img * 255).astype(np.uint8), mask[:, :, indFrame].astype(np.uint8), 3,
                           cv2.INPAINT_TELEA).astype(np.float32) / 255.
 
-        gradient_x_ = np.concatenate((np.diff(img, axis=1), np.zeros((imgH, 1, 3), dtype=np.float32)),
-                                     axis=1)
+        gradient_x_ = np.concatenate((np.diff(img, axis=1), np.zeros((imgH, 1, 3), dtype=np.float32)), axis=1)
         gradient_y_ = np.concatenate((np.diff(img, axis=0), np.zeros((1, imgW, 3), dtype=np.float32)), axis=0)
         gradient_x = np.concatenate((gradient_x, gradient_x_.reshape(imgH, imgW, 3, 1)), axis=-1)
         gradient_y = np.concatenate((gradient_y, gradient_y_.reshape(imgH, imgW, 3, 1)), axis=-1)
