@@ -6,9 +6,7 @@ from .BaseNetwork import BaseNetwork
 class Model(nn.Module):
     def __init__(self, config):
         super(Model, self).__init__()
-        self.net = P3DNet(config['num_flows'], config['cnum'], config['in_channel'], config['PASSMASK'],
-                          config['use_residual'],
-                          config['resBlocks'], config['use_bias'], config['conv_type'], config['init_weights'])
+        self.net = P3DNet()
 
     def forward(self, flows, masks, edges=None):
         ret = self.net(flows, masks, edges)
@@ -16,8 +14,8 @@ class Model(nn.Module):
 
 
 class P3DNet(BaseNetwork):
-    def __init__(self, num_flows, num_feats, in_channels, passmask, use_residual, res_blocks,
-                 use_bias, conv_type, init_weights):
+    def __init__(self, num_flows=3, num_feats=48, in_channels=3, passmask=1, use_residual=1, res_blocks=1,
+                 use_bias=1, conv_type='vanilla', init_weights=1):
         super().__init__(conv_type)
         self.passmask = passmask
         self.encoder2 = nn.Sequential(

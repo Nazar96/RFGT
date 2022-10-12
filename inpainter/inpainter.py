@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional, List, Any
+from typing import Tuple, List, Any
 import numpy as np
 import cv2
 
@@ -8,20 +8,39 @@ from tool.utils.Poisson_blend_img import Poisson_blend_img
 
 
 class BaseVideoInpainter(ABC):
+    """
+    Base class for restoring the selected region in an video sequence. 
+    """
+
+    def preprocess_input(self, frames, masks, *args, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
+        return frames, masks
+
+    def postprocess_output(self, frames, masks, *args, **kwargs):
+        return frames, masks
 
     @abstractmethod
-    def inpaint(self, frames: np.ndarray, masks: np.ndarray, flows: Optional[np.ndarray], **kwargs) -> Tuple[List[Any], List[Any]]:
+    def _inpaint(self, frames: np.ndarray, masks: np.ndarray, *args, **kwargs) -> Tuple[List[Any], List[Any]]:
         pass
+
+    def inpaint(self, frames: np.ndarray, masks: np.ndarray, *args, **kwargs) -> Tuple[List[Any], List[Any]]:
+        frames, masks = self.preprocess_input(frames, masks)
+        frames, masks = self._inpaint(frames, masks)
+        frames, masks = self.postprocess_output(frames, masks)
+        return frames, masks
 
     def __call__(self, frames, masks, **kwargs) -> Any:
         return self.inpaint(frames, masks, **kwargs)
 
 
 class NeighbourVideoInpainter(BaseVideoInpainter):
+    """
+    Restores the selected region in an video sequence using the region neighborhood. 
+    """
+
     def __init__(self) -> None:
         super().__init__()
 
-    def inpaint(self, frames: np.ndarray, masks: np.ndarray, flows: Optional[np.ndarray]=None, **kwargs) -> Tuple[List[Any], List[Any]]:
+    def inpaint(self, frames: np.ndarray, masks: np.ndarray, *args, **kwargs) -> Tuple[List[Any], List[Any]]:
         inpainted_frames = []
         inpainted_masks = []
         for idx in range(len(frames)):
@@ -39,18 +58,60 @@ class NeighbourVideoInpainter(BaseVideoInpainter):
 
 
 class GradientPropagationVideoInpainter(BaseVideoInpainter):
+    """
+    Restores the selected region in an video sequence using content gradient propagation. 
+    """
+
     def __init__(self) -> None:
         super().__init__()
 
+    def preprocess_input(
+                self, 
+                frames: np.ndarray, 
+                masks: np.ndarray, 
+                forward_flows: np.ndarray, 
+                backward_flows: np.ndarray,  
+                *args, 
+                **kwargs,
+            ) -> Tuple[np.ndarray, np.ndarray]:
+
+        frames = np.asarray(frames)
+        masks = np.asarray(masks)
+
+        frames = frames / 255
+        masks = masks > 0
+
+        return frames, masks, forward_flows, backward_flows
+
+    def postprocess_output(self, frames: np.ndarray, masks: np.ndarray, *args, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
+        
+        frames = np.asarray(frames).clip(0,1)
+        masks = np.asarray(masks).clip(0,1)
+
+        frames = (frames*255).astype(np.uint8)
+        masks = (masks*255).astype(np.uint8)
+
+        return frames, masks
+
     @staticmethod
-    def gradient_mask(mask: "mask") -> "mask":
+    def gradient_mask(mask: np.ndarray) -> np.ndarray:
         return np.logical_or.reduce((
             mask,
             np.concatenate((mask[1:, :], np.zeros((1, mask.shape[1]), dtype=np.bool)), axis=0),
             np.concatenate((mask[:, 1:], np.zeros((mask.shape[0], 1), dtype=np.bool)), axis=1),
             ))
 
-    def prepare_gradients(self, frames, masks) -> "gradients":
+    def prepare_gradients(self, frames:np.ndarray, masks:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Prepare image gradients for further content propagation
+
+        Args:
+            frames (np.ndarray): sequence of frames
+            masks (np.ndarray): sequence of masks
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: gradients for content propagation
+        """
         number_of_frames, height, width = frames.shape[:3]
         gradient_x = np.empty(((height, width, 3, 0)), dtype=np.float32)
         gradient_y = np.empty(((height, width, 3, 0)), dtype=np.float32)
@@ -80,7 +141,27 @@ class GradientPropagationVideoInpainter(BaseVideoInpainter):
         return gradient_x, gradient_y
 
     @staticmethod
-    def poisson_blending(frames, masks, gradients_x, gradients_y, masks_gradient) -> Tuple[List[Any], List[Any]]:
+    def poisson_blending(
+                frames: np.ndarray,
+                masks : np.ndarray,
+                gradients_x: np.ndarray, 
+                gradients_y: np.ndarray, 
+                masks_gradient: np.ndarray,
+            ) -> Tuple[List[Any], List[Any]]:
+        """
+        Propagate gradients using poisson blending 
+
+        Args:
+            frames (_type_):  sequence of frames
+            masks (_type_):  sequence of frames
+            gradients_x (_type_):  video sequence gradients along x 
+            gradients_y (_type_):  video sequence gradients along y
+            masks_gradient (_type_):  mask sequence gradients
+
+        Returns:
+            Tuple[List[Any], List[Any]]: propagated contnent frames nad masks
+        """
+
         blended_frames = []
         blended_masks = []
         for idx in range(len(frames)):
@@ -97,40 +178,25 @@ class GradientPropagationVideoInpainter(BaseVideoInpainter):
                     )
                 blended_frames.append(frame)
                 blended_masks.append(masks)
+        
+        blended_frames = np.array(blended_frames)
+        blended_masks = np.array(blended_masks)
         return blended_frames, blended_masks
 
-    def inpaint(self, frames: np.ndarray, masks: np.ndarray, flows: Optional[Tuple], **kwargs) -> Tuple[List[Any], List[Any]]:
-        frames, _ = NeighbourVideoInpainter().inpaint(frames, masks)
+    def inpaint(
+                self, 
+                frames: np.ndarray, 
+                masks: np.ndarray, 
+                forward_flows: np.ndarray, 
+                backward_flows: np.ndarray,
+                *args,
+                **kwargs
+            ) -> Tuple[np.ndarray, np.ndarray]:
+        frames, masks, forward_flows, backward_flows = self.preprocess_input(frames, masks, forward_flows, backward_flows)
+
         gx, gy = self.prepare_gradients(frames, masks)
-        gx, gy, gm = get_flowNN_gradient(gx, gy, masks>0, flows, flows)
-
-        print()
-        print(gx.shape)
-        print(gy.shape)
-        print(gm.shape)
-
+        gx, gy, gm = get_flowNN_gradient(gx, gy, masks, forward_flows, backward_flows)
         frames, masks = self.poisson_blending(frames, masks, gx, gy, gm)
+
+        frames, masks = self.postprocess_output(frames, masks) 
         return frames, masks
-
-
-class TransformerVideoInpainter(BaseVideoInpainter):
-    pass
-
-# from inpainter.inpainter import GradientPropagationVideoInpainter
-# import numpy as np
-
-# def fake_data(h=240, w=432, n=120):
-#     images = np.random.uniform(size=(n, h, w, 3))*256
-#     images = images.astype(np.uint8)
-
-#     size = 30
-
-#     masks = np.zeros((n, h, w), dtype=np.uint8)
-#     masks[:, h//2-size : h//2+size, w//2-size : w//2+size] = 255
-
-#     flows = np.random.uniform(size=(n, h, w, 2)).astype(np.float32)
-#     return images, masks, flows
-
-# a = GradientPropagationVideoInpainter()
-# images, masks, flows = fake_data(240, 432, 60)
-# a.inpaint(images, masks, flows)

@@ -13,7 +13,8 @@ def get_flowNN_gradient(
                         videoFlowF,
                         videoFlowB,
                         videoNonLocalFlowF=None,
-                        videoNonLocalFlowB=None):
+                        videoNonLocalFlowB=None
+                        ):
 
     # gradient_x:         imgH x (imgW - 1 + 1) x 3 x nFrame
     # gradient_y:         (imgH - 1 + 1) x imgW x 3 x nFrame
