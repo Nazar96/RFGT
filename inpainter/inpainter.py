@@ -183,6 +183,20 @@ class GradientPropagationVideoInpainter(BaseVideoInpainter):
         blended_masks = np.array(blended_masks)
         return blended_frames, blended_masks
 
+    def _inpaint(
+                self, 
+                frames: np.ndarray, 
+                masks: np.ndarray, 
+                forward_flows: np.ndarray, 
+                backward_flows: np.ndarray, 
+                *args, 
+                **kwargs
+            ) -> Tuple[List[Any], List[Any]]:
+        gx, gy = self.prepare_gradients(frames, masks)
+        gx, gy, gm = get_flowNN_gradient(gx, gy, masks, forward_flows, backward_flows)
+        frames, masks = self.poisson_blending(frames, masks, gx, gy, gm)
+        return frames, masks
+
     def inpaint(
                 self, 
                 frames: np.ndarray, 
@@ -193,10 +207,6 @@ class GradientPropagationVideoInpainter(BaseVideoInpainter):
                 **kwargs
             ) -> Tuple[np.ndarray, np.ndarray]:
         frames, masks, forward_flows, backward_flows = self.preprocess_input(frames, masks, forward_flows, backward_flows)
-
-        gx, gy = self.prepare_gradients(frames, masks)
-        gx, gy, gm = get_flowNN_gradient(gx, gy, masks, forward_flows, backward_flows)
-        frames, masks = self.poisson_blending(frames, masks, gx, gy, gm)
-
+        frames, masks = self._inpaint(frames, masks, forward_flows, backward_flows)
         frames, masks = self.postprocess_output(frames, masks) 
         return frames, masks
