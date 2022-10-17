@@ -4,7 +4,7 @@ from .BaseNetwork import BaseNetwork
 
 
 class Model(nn.Module):
-    def __init__(self, config):
+    def __init__(self):
         super(Model, self).__init__()
         self.net = P3DNet()
 

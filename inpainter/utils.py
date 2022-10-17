@@ -15,7 +15,7 @@ def load_frames(path: str, files: List[str]) -> List[np.ndarray]:
     frames = []
     for f in files:
         frame = cv2.imread(os.path.join(path, f))
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frames.append(frame)
     return frames
 
@@ -43,4 +43,4 @@ def save_frames(path: str, files: List[str], frames: List[np.ndarray]) -> None:
 
 
 def resize(images: List[np.ndarray], h: int, w: int) -> List[np.ndarray]:
-    return [cv2.resize(img, (w, h)) for img in images]
+    return np.asarray([cv2.resize(img, (w, h)) for img in images])

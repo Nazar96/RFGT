@@ -32,22 +32,23 @@ class BaseVideoInpaintingPipeline(ABC):
     def run(self, frames: np.ndarray, masks: np.ndarray, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
 
         initial_height, initial_width = frames[0].shape[:2]
-        height, width = initial_height, initial_width if self.resolution is None else self.resolution
-        
+        height, width = (initial_height, initial_width) if self.resolution is None else self.resolution
+                
         resized_frames = resize(frames, height, width)
         resized_masks = resize(masks, height, width)
-
+        
         inpainted_frames, inpainted_masks = self._inpaint(resized_frames, resized_masks, **kwargs)
 
         inpainted_frames = resize(inpainted_frames, initial_height, initial_width)
         inpainted_masks = resize(inpainted_masks, initial_height, initial_width)
 
-        result_frames = []
-        for frame, inp_frame, mask in zip(frames, inpainted_frames, masks):
-            frame[mask] = inp_frame[mask]
-            result_frames.append(frame)
+#         result_frames = []
+#         for frame, inp_frame, mask in zip(frames, inpainted_frames, masks):
+#             frame[mask] = inp_frame[mask]
+#             result_frames.append(frame)
 
-        return result_frames, inpainted_masks
+        return inpainted_frames, inpainted_masks
+#         return result_frames, inpainted_masks
 
 
 class VideoInpaintingPipeline(BaseVideoInpaintingPipeline):
@@ -79,8 +80,30 @@ class VideoInpaintingPipeline(BaseVideoInpaintingPipeline):
     def _inpaint(self, frames: List[np.ndarray], masks: List[np.ndarray], **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         for _ in range(self.flow_propagation_steps):
 
-            forward_flow, backward_flow = self.optical_flow_completer.fb_complete(frames, masks)
+            forward_flow, backward_flow = self.optical_flow_estimator.estimate_fb_flows(frames)
+            
+            import matplotlib.pyplot as plt
+            plt.imshow(forward_flow[10][:,:,0])
+            plt.show()
+            
+            plt.imshow(masks[10])
+            plt.show()
+            
+            print(forward_flow.shape)
+            
+            forward_flow, backward_flow = self.optical_flow_completer.fb_complete(forward_flow, backward_flow, masks)
+            
+            print(forward_flow.shape)
+            
+            import matplotlib.pyplot as plt
+            plt.imshow(forward_flow[10][:,:,0])
+            plt.show()
+            
             frames, masks = self.propagation_inpainter.inpaint(frames, masks, forward_flow, backward_flow)
+            
+            import matplotlib.pyplot as plt
+            plt.imshow(frames[10])
+            plt.show()
 
-        frames, masks = self.hallucination_inpainter(frames, masks)
+#         frames, masks = self.hallucination_inpainter(frames, masks)
         return frames, masks

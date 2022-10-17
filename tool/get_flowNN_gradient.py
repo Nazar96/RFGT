@@ -29,8 +29,15 @@ def get_flowNN_gradient(
     # else:
     #     num_candidate = 2
 
+    
+    print('shapes')
+    print(mask.shape)
+    print(videoFlowF.shape)
+    print(videoFlowB.shape)
+    
     mask = np.moveaxis(mask, 0, -1)
-
+    videoFlowF = np.moveaxis(videoFlowF, 0, -1)
+    videoFlowB = np.moveaxis(videoFlowB, 0, -1)
     
     num_candidate = 2
     Nonlocal = False
@@ -77,10 +84,10 @@ def get_flowNN_gradient(
     frameIndSetB = range(nFrame - 2, -1, -1)
 
     # 1. Forward Pass (backward flow propagation)
-    print('Forward Pass......')
-
+    from tqdm import tqdm
+    
     NN_idx = 0 # BN:0
-    for indFrame in frameIndSetF:
+    for indFrame in tqdm(frameIndSetF):
 
         # Bool indicator of missing pixels at frame t
         holepixPosInd = (sub[:, 2] == indFrame)
@@ -92,7 +99,6 @@ def get_flowNN_gradient(
         flowB_neighbor = copy.deepcopy(holepixPos)
         flowB_neighbor = flowB_neighbor.astype(np.float32)
 
-        print('videoFlowB', videoFlowB.shape, indFrame)
         flowB_vertical = videoFlowB[:, :, 1, indFrame - 1]  # t --> t-1
         flowB_horizont = videoFlowB[:, :, 0, indFrame - 1]
         flowF_vertical = videoFlowF[:, :, 1, indFrame - 1]  # t-1 --> t
@@ -234,17 +240,16 @@ def get_flowNN_gradient(
 
         consistencyMap[:, :, NN_idx, indFrame] = (consistency_uv[:, :, NN_idx, 0, indFrame] ** 2 + consistency_uv[:, :, NN_idx, 1, indFrame] ** 2) ** 0.5
 
-        print("Frame {0:3d}: {1:8d} + {2:8d} = {3:8d}"
-        .format(indFrame,
-                np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 1),
-                np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 0),
-                np.sum(HaveFlowNN[:, :, indFrame, NN_idx] != 99999)))
+#         print("Frame {0:3d}: {1:8d} + {2:8d} = {3:8d}"
+#         .format(indFrame,
+#                 np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 1),
+#                 np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 0),
+#                 np.sum(HaveFlowNN[:, :, indFrame, NN_idx] != 99999)))
 
     # 2. Backward Pass (forward flow propagation)
-    print('Backward Pass......')
 
     NN_idx = 1 # FN:1
-    for indFrame in frameIndSetB:
+    for indFrame in tqdm(frameIndSetB):
 
         # Bool indicator of missing pixels at frame t
         holepixPosInd = (sub[:, 2] == indFrame)
@@ -369,11 +374,11 @@ def get_flowNN_gradient(
 
         consistencyMap[:, :, NN_idx, indFrame] = (consistency_uv[:, :, NN_idx, 0, indFrame] ** 2 + consistency_uv[:, :, NN_idx, 1, indFrame] ** 2) ** 0.5
 
-        print("Frame {0:3d}: {1:8d} + {2:8d} = {3:8d}"
-        .format(indFrame,
-                np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 1),
-                np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 0),
-                np.sum(HaveFlowNN[:, :, indFrame, NN_idx] != 99999)))
+#         print("Frame {0:3d}: {1:8d} + {2:8d} = {3:8d}"
+#         .format(indFrame,
+#                 np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 1),
+#                 np.sum(HaveFlowNN[:, :, indFrame, NN_idx] == 0),
+#                 np.sum(HaveFlowNN[:, :, indFrame, NN_idx] != 99999)))
 
     # Interpolation
     gradient_x_BN = copy.deepcopy(gradient_x)
@@ -381,12 +386,12 @@ def get_flowNN_gradient(
     gradient_x_FN = copy.deepcopy(gradient_x)
     gradient_y_FN = copy.deepcopy(gradient_y)
 
-    for indFrame in range(nFrame):
+    for indFrame in tqdm(range(nFrame)):
         # Index of missing pixel whose backward flow neighbor is from frame indFrame
         SourceFmInd = np.where(flowNN[:, 2, 0] == indFrame)
 
-        print("{0:8d} pixels are from source Frame {1:3d}"
-                        .format(len(SourceFmInd[0]), indFrame))
+#         print("{0:8d} pixels are from source Frame {1:3d}"
+#                         .format(len(SourceFmInd[0]), indFrame))
         # The location of the missing pixel whose backward flow neighbor is
         # from frame indFrame flowNN[SourceFmInd, 0, 0], flowNN[SourceFmInd, 1, 0]
 
@@ -417,11 +422,11 @@ def get_flowNN_gradient(
 
             assert(((sub[SourceFmInd[0], :][:, 2] - indFrame) <= 0).sum() == 0)
 
-    for indFrame in range(nFrame - 1, -1, -1):
+    for indFrame in tqdm(range(nFrame - 1, -1, -1)):
         # Index of missing pixel whose forward flow neighbor is from frame indFrame
         SourceFmInd = np.where(flowNN[:, 2, 1] == indFrame)
-        print("{0:8d} pixels are from source Frame {1:3d}"
-                        .format(len(SourceFmInd[0]), indFrame))
+#         print("{0:8d} pixels are from source Frame {1:3d}"
+#                         .format(len(SourceFmInd[0]), indFrame))
         if len(SourceFmInd[0]) != 0:
 
             gradient_x_FN[sub[SourceFmInd[0], :][:, 0],

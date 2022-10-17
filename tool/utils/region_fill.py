@@ -62,16 +62,10 @@ def regionfillLaplace(I, mask, maskPerimeter):
         s = np.concatenate((s, -np.ones(np.count_nonzero(index))))
 
     D = sparse.coo_matrix((s, (i.astype(int), j.astype(int)))).tocsr()
-    import time
-    print('start spsolve')
-    
-    start = time.time()
     D = cp_csr_matrix(D)
     rightSide = cp.array(rightSide)
-    
     sol = cg(D, rightSide)[0].get()
 #     sol = spsolve(D, rightSide)
-    print('finish spsolve', time.time() - start)
     I[maskIdx] = sol
     return I
 

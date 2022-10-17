@@ -40,7 +40,7 @@ class NeighbourVideoInpainter(BaseVideoInpainter):
     def __init__(self) -> None:
         super().__init__()
 
-    def inpaint(self, frames: np.ndarray, masks: np.ndarray, *args, **kwargs) -> Tuple[List[Any], List[Any]]:
+    def _inpaint(self, frames: np.ndarray, masks: np.ndarray, *args, **kwargs) -> Tuple[List[Any], List[Any]]:
         inpainted_frames = []
         inpainted_masks = []
         for idx in range(len(frames)):
@@ -164,7 +164,9 @@ class GradientPropagationVideoInpainter(BaseVideoInpainter):
 
         blended_frames = []
         blended_masks = []
-        for idx in range(len(frames)):
+        
+        from tqdm import tqdm
+        for idx in tqdm(range(len(frames))):
             frame, mask = frames[idx], masks[idx]
             gradient_x, gradient_y = gradients_x[:,:,:,idx], gradients_y[:,:,:,idx]
             mask_gradient = masks_gradient[:,:,idx] if masks_gradient is not None else None
@@ -177,7 +179,7 @@ class GradientPropagationVideoInpainter(BaseVideoInpainter):
                     mask_gradient,
                     )
                 blended_frames.append(frame)
-                blended_masks.append(masks)
+                blended_masks.append(mask)
         
         blended_frames = np.array(blended_frames)
         blended_masks = np.array(blended_masks)
