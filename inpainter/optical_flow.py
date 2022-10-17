@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 from enum import Enum
 
 import torch
+from torch import nn
 import numpy as np
 
 from RAFT import RAFT
@@ -49,7 +50,7 @@ class BaseOpticalFlowEstimator(ABC):
 
 
 class RAFTOpticalFlowEstimator(BaseOpticalFlowEstimator):
-    def __init__(self, model: Union[str, torch.Module] = 'LAFC/flowCheckPoint/raft-things.pth') -> None:
+    def __init__(self, model: Union[str, nn.Module] = 'LAFC/flowCheckPoint/raft-things.pth') -> None:
         super().__init__()
         if isinstance(model, str):
             self.model = self.initialize_RAFT(model)
@@ -85,7 +86,7 @@ class BaseOpticalFlowCompleter(ABC):
 
 
 class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
-    def __init__(self, model: Union[str, torch.Module] = 'LAFC/checkpoint/') -> None:
+    def __init__(self, model: Union[str, nn.Module] = 'LAFC/checkpoint/') -> None:
         super().__init__()
         if isinstance(model, str):
             self.model = self.initialize_LAFC(model)
@@ -93,7 +94,7 @@ class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
             self.model = model
 
     @staticmethod
-    def initialize_LAFC(pth: str, device) -> torch.Module:
+    def initialize_LAFC(pth: str, device) -> nn.Module:
         model = LAFC()
         state = torch.load(pth, map_location=lambda storage, loc: storage.cuda(device))
         model.load_state_dict(state['model_state_dict'])
@@ -112,7 +113,7 @@ class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
         return flows_filled
 
     @staticmethod
-    def tensor(array: np.ndarray) -> torch.Tensor:
+    def tensor(array: np.ndarray) -> torch.tensor:
         array = np.asarray(array)
         array = torch.from_numpy(np.transpose(array, (3, 0, 1, 2))).unsqueeze(0).float()  # [1, c, t, h, w]
         return array
