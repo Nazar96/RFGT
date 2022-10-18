@@ -15,7 +15,6 @@ def load_frames(path: str, files: List[str]) -> List[np.ndarray]:
     frames = []
     for f in files:
         frame = cv2.imread(os.path.join(path, f))
-#         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frames.append(frame)
     return frames
 

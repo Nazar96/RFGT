@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Union
 from enum import Enum
+from tqdm import tqdm
 
 import torch
 from torch import nn
@@ -24,19 +25,10 @@ class BaseOpticalFlowEstimator(ABC):
         
     def estimate_flows(self, frames: np.ndarray , mode: FlowDirection) -> Tuple[List, List]:
         result = []
-
-        from tqdm import tqdm
         with torch.no_grad():
-
             for idx in tqdm(range(len(frames)-1)):
-                
-                if mode is FlowDirection.FORWARD:
-                    image_0 = frames[idx, None]
-                    image_1 = frames[idx + 1, None]
-
-                else:
-                    image_0 = frames[idx + 1, None]
-                    image_1 = frames[idx, None]
+                image_0, image_1 = (frames[idx, None], frames[idx + 1, None]) if mode is FlowDirection.FORWARD \
+                    else (frames[idx + 1, None], frames[idx, None])
                 
                 flow = self._predict(image_0, image_1)
                 result.append(flow)
@@ -45,6 +37,7 @@ class BaseOpticalFlowEstimator(ABC):
         return result
 
     def estimate_fb_flows(self, frames: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        print('Optical flows estimation. Forward and backward directaions')
         forward_flows = self.estimate_flows(frames, FlowDirection.FORWARD)
         backward_flows = self.estimate_flows(frames, FlowDirection.BACKWARD)
         return forward_flows, backward_flows
@@ -90,10 +83,20 @@ class RAFTOpticalFlowEstimator(BaseOpticalFlowEstimator):
 class BaseOpticalFlowCompleter(ABC):
 
     @abstractmethod
-    def complete(self, flows: np.ndarray, masks: np.ndarray, mode: FlowDirection) -> np.ndarray:
+    def _complete(self, flows: np.ndarray, masks: np.ndarray, mode: FlowDirection) -> np.ndarray:
         pass
+    
+    def complete(self, flows: np.ndarray, masks: np.ndarray, mode: FlowDirection) -> np.ndarray:
+        flows, masks = self.preprocess(flows, masks)
+        flows = self._complete(flows, masks, mode)
+        return flows
+    
+    def preprocess(self, flows: np.ndarray, masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        masks = masks/255
+        return flows, masks
 
     def fb_complete(self, forward_flows: np.ndarray, backward_flows: np.ndarray, masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        print('Optical flows completion. Forward and backward directaions')
         forward_flows = self.complete(forward_flows, masks, FlowDirection.FORWARD)
         backward_flows = self.complete(backward_flows, masks, FlowDirection.BACKWARD)
         return forward_flows, backward_flows
@@ -129,10 +132,10 @@ class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
         return flows_filled
 
     @staticmethod
-    def tensor(array: np.ndarray) -> torch.tensor:
+    def _2tensor(array: np.ndarray) -> torch.tensor:
         array = np.asarray(array)
         array = torch.from_numpy(np.transpose(array, (3, 0, 1, 2))).unsqueeze(0).float()  # [1, c, t, h, w]
-        return array.to('cuda:0')
+        return array
 
     @staticmethod
     def generate_idxs(pivot, interval, frames, t) -> List[int]:
@@ -148,7 +151,7 @@ class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
 
         return results
 
-    def complete(self, flows: np.ndarray, masks: np.ndarray, mode: FlowDirection) -> np.ndarray:
+    def _complete(self, flows: np.ndarray, masks: np.ndarray, mode: FlowDirection) -> np.ndarray:
         # flow_masks  [N, H, W]
         # flows [N, H, W, 2]
     
@@ -159,20 +162,12 @@ class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
         masks = masks[:-1] if mode is FlowDirection.FORWARD else masks[1:]
         
         diffused_flows = self.diffusion(flows, masks)
-        print('diffused_flows', diffused_flows.shape)
+        flows, masks, diffused_flows = self._2tensor(flows), self._2tensor(masks), self._2tensor(diffused_flows)
         
-        print('diffused')
-        import matplotlib.pyplot as plt
-        plt.imshow(diffused_flows[10][:,:,0])
-        plt.show()
-        
-        flows, masks, diffused_flows = self.tensor(flows), self.tensor(masks), self.tensor(diffused_flows)
-
         t = diffused_flows.shape[2]
-        filled_flows = [None] * t
         pivot = num_flows // 2
+        result = []
 
-        from tqdm import tqdm
         for i in tqdm(range(t)):
             indices = self.generate_idxs(i, flow_interval, num_flows, t)
             cand_flows = flows[:, :, indices]
@@ -181,18 +176,14 @@ class LAFCOpticalFlowCompleter(BaseOpticalFlowCompleter):
             pivot_mask = cand_masks[:, :, pivot]
             pivot_flow = cand_flows[:, :, pivot]
             with torch.no_grad():
-                output_flow = self.model(inputs, cand_masks)
-            if isinstance(output_flow, tuple) or isinstance(output_flow, list):
-                output_flow = output_flow[0]
+                inputs, cand_masks = inputs.to(self.device), cand_masks.to(self.device)
+                output_flow = self.model(inputs, cand_masks)[0].cpu()
+                del inputs, cand_masks
+                torch.cuda.empty_cache
                 
-            output_flow = output_flow.cpu()
-            comp = output_flow.cpu() * pivot_mask.cpu() + pivot_flow.cpu() * (1 - pivot_mask.cpu())
-            if filled_flows[i] is None:
-                filled_flows[i] = comp
+            comp = output_flow * pivot_mask + pivot_flow * (1 - pivot_mask)
+            result.append(comp[0].numpy())
                 
-        filled_flows = [f[0].cpu().numpy() for f in filled_flows]
-        filled_flows = np.asarray(filled_flows)
-        filled_flows = np.moveaxis(filled_flows, 1, -1)
-        
-        print('filled_flows', filled_flows.shape)
-        return filled_flows
+        result = np.asarray(result)
+        result = np.moveaxis(result, 1, -1)
+        return result

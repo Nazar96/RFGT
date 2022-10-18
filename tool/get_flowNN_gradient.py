@@ -24,17 +24,6 @@ def get_flowNN_gradient(
     # videoNonLocalFlowF: imgH x imgW x 2 x 3 x nFrame
     # videoNonLocalFlowB: imgH x imgW x 2 x 3 x nFrame
 
-    # if args.Nonlocal:
-    #     num_candidate = 5
-    # else:
-    #     num_candidate = 2
-
-    
-    print('shapes')
-    print(mask.shape)
-    print(videoFlowF.shape)
-    print(videoFlowB.shape)
-    
     mask = np.moveaxis(mask, 0, -1)
     videoFlowF = np.moveaxis(videoFlowF, 0, -1)
     videoFlowB = np.moveaxis(videoFlowB, 0, -1)
@@ -43,7 +32,6 @@ def get_flowNN_gradient(
     Nonlocal = False
     consistencyThres = 5
     alpha = 0.1
-
 
     imgH, imgW, nFrame = mask.shape
     numPix = np.sum(mask)
